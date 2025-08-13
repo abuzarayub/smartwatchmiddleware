@@ -83,4 +83,4 @@ build/
 
 # Android (if any)
 app/build/
-app/release/
+app/release/".env" 
