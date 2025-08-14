@@ -64,6 +64,8 @@ jspm_packages/
 # Ensure .env is ignored even if previously tracked
 .env
 
+
+.history
 # IDE
 .vscode/
 .idea/
@@ -83,4 +85,4 @@ build/
 
 # Android (if any)
 app/build/
-app/release/".env" 
+app/release/

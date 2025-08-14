@@ -34,59 +34,46 @@ const generateMessage = async (req, res) => {
  * then generates a personalized message.
  */
 const generateMessageByUserId = async (req, res) => {
-  const userId = req.query.userId;
-  console.log(`[${new Date().toISOString()}] [MESSAGE] generateMessageByUserId request received for userId: ${userId}`);
- 
-  
+  const userId = req.params.userId || req.query.userId;
+  console.log(`[${new Date().toISOString()}] [MESSAGE] Received request to generate message for userId: ${userId}`);
+
   if (!userId) {
+    console.error(`[${new Date().toISOString()}] [ERROR] userId is missing in request`);
     return res.status(400).json({ error: 'userId is required' });
   }
 
   try {
-    // Get date range for yesterday and today
+    // Date range for yesterday and today
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
     const fmt = date => date.toISOString().split('T')[0];
     const startDate = fmt(yesterday);
     const endDate = fmt(today);
+    console.log(`[${new Date().toISOString()}] [INFO] Date range set: ${startDate} to ${endDate}`);
 
-    // Fetch user info to get name
-    console.log(`Fetching user info for userId: ${userId}`);
-    const userResponse = await axios.get('https://api-02.fitrockr.com/v1/users', {
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Tenant': process.env.FITROCKR_TENANT,
-        'X-API-Key': process.env.FITROCKR_API_KEY
-      }
+    // Fetch user info using fitrockrController
+    console.log(`[${new Date().toISOString()}] [INFO] Fetching user info for userId: ${userId}`);
+    const { getUser } = require('./fitrockrController');
+    const userResponse = await getUser({ params: { userId } });
+    const user = userResponse.data;
+
+    const userName = user.firstName || 'there';
+    console.log(`[${new Date().toISOString()}] [INFO] User found: ${userName}`);
+
+    // Fetch health data using fitrockrController
+    console.log(`[${new Date().toISOString()}] [INFO] Fetching health data for userId: ${userId}`);
+    const { getDailySummary } = require('./fitrockrController');
+    const entries = await getDailySummary({
+      params: { userId },
+      query: { startDate, endDate }
     });
 
-    // Find the user with matching ID
-    const user = userResponse.data.find(u => u.id === userId);
-    const userName = user ? (user.firstName || 'there') : 'there';
-
-    // Fetch health data summary
-    console.log(`Fetching health data for userId: ${userId}`);
-    const summaryUrl = `https://api-02.fitrockr.com/v1/users/${userId}/dailySummaries?startDate=${startDate}&endDate=${endDate}`;
-    const summaryResponse = await axios.get(summaryUrl, {
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Tenant': process.env.FITROCKR_TENANT,
-        'X-API-Key': process.env.FITROCKR_API_KEY
-      }
-    });
-
-    const entries = summaryResponse.data.content || summaryResponse.data;
-    
-    if (!Array.isArray(entries) || entries.length === 0) {
-      return res.json({ message: `Hi ${userName}! I don't have any recent health data for you. Keep up the good work!` });
-    }
-
-    // Filter & sort by date to get the latest entry
+    // Filter and sort entries
     const filtered = entries
       .filter(e => {
         if (!e.date) return false;
-        const d = `${e.date.year}-${String(e.date.month).padStart(2,'0')}-${String(e.date.day).padStart(2,'0')}`;
+        const d = `${e.date.year}-${String(e.date.month).padStart(2, '0')}-${String(e.date.day).padStart(2, '0')}`;
         return d >= startDate && d <= endDate;
       })
       .sort((a, b) => {
@@ -96,23 +83,44 @@ const generateMessageByUserId = async (req, res) => {
       });
 
     if (filtered.length === 0) {
-      return res.json({ message: `Hi ${userName}! I don't have any recent health data for you. Keep up the good work!` });
+      console.warn(`[${new Date().toISOString()}] [WARNING] No recent health data found for user ${userId}`);
+      return res.json({
+        message: null,
+        hasFitrockerData: false,
+        fitrockerData: null,
+        error: "No recent health data available"
+      });
     }
 
     const latest = filtered[0];
+    console.log(`[${new Date().toISOString()}] [INFO] Latest health data retrieved:`, latest);
 
-    // Build healthData object
+    // Build health data object
     const healthData = {
-      steps:           latest.steps           || 0,
-      calories:        latest.calories        || 0,
-      distance:        latest.distance        || 0,
-      activeMinutes:   latest.activityMinutes || 0,
-      sleepHours:      latest.sleepDuration ? latest.sleepDuration / 3600 : 0,
-      heartRate:       latest.averageHeartRate || 0
+      steps: latest.steps || 0,
+      calories: latest.calories || 0,
+      distance: latest.distance || 0,
+      activeMinutes: latest.activityMinutes || 0,
+      sleepHours: latest.sleepDuration ? latest.sleepDuration / 3600 : 0,
+      heartRate: latest.averageHeartRate || 0
     };
+    console.log(`[${new Date().toISOString()}] [INFO] Health data structured:`, healthData);
+
+    // Human-readable format
+    const humanReadableData = {
+      steps: `${healthData.steps} steps`,
+      calories: `${healthData.calories} calories burned`,
+      distance: `${(healthData.distance / 1000).toFixed(2)} km`,
+      activeMinutes: `${healthData.activeMinutes} active minutes`,
+      sleepHours: `${healthData.sleepHours.toFixed(1)} hours of sleep`,
+      heartRate: `${healthData.heartRate} bpm average heart rate`,
+      date: `${latest.date.year}-${String(latest.date.month).padStart(2, '0')}-${String(latest.date.day).padStart(2, '0')}`
+    };
+    console.log(`[${new Date().toISOString()}] [INFO] Human-readable health data:`, humanReadableData);
 
     // Generate personalized message
-    const prompt = `Generate a personalized health coaching message for ${userName} based on this health data:\n${JSON.stringify(healthData)}. Start with "Hi ${userName}" and keep it motivational and concise.`;
+    const prompt = `Generate a personalized health coaching message for ${userName} based on this health data:\n${JSON.stringify(healthData)}. Dont Start with Greeting but include his name ${userName}" and keep it motivational and concise and it should be in dutch language not in english and dont include any characters or quotation marks in the message.`;
+    console.log(`[${new Date().toISOString()}] [INFO] Generated prompt for OpenAI API`);
 
     const response = await axios.post('https://api.openai.com/v1/chat/completions', {
       model: "gpt-3.5-turbo",
@@ -125,12 +133,35 @@ const generateMessageByUserId = async (req, res) => {
     });
 
     const message = response.data.choices[0].message.content;
-    res.json({ message });
+    console.log(`[${new Date().toISOString()}] [INFO] Received message from OpenAI API`);
+
+    res.json({
+      message,
+      hasFitrockerData: true,
+      fitrockerData: humanReadableData
+    });
   } catch (error) {
-    console.error(`[${new Date().toISOString()}] [MESSAGE] Error in generateMessageByUserId for userId ${userId}: ${error.message}`);
-    res.status(500).json({ error: error.message });
+    console.error(`[${new Date().toISOString()}] [ERROR] Error in generateMessageByUserId for userId ${userId}: ${error.message}`);
+    let errorMessage = error.message;
+    let statusCode = 500;
+
+    if (error.message.includes("No user found")) {
+      errorMessage = "User not registered on Fitrocker";
+      statusCode = 404;
+    } else if (error.message.includes("No summary found")) {
+      errorMessage = "No health data available";
+      statusCode = 404;
+    }
+
+    res.status(statusCode).json({
+      message: null,
+      hasFitrockerData: false,
+      fitrockerData: null,
+      error: errorMessage
+    });
   }
 };
+
 
 module.exports = {
   generateMessage,
