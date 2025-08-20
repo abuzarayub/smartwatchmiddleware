@@ -14,12 +14,22 @@ const config = {
 
 const poolPromise = new sql.ConnectionPool(config)
   .connect()
-  .then(pool => {
-    console.log('Connected to Azure SQL');
+  .then(async pool => {
+    console.log('✅ Connected to Azure SQL');
+
+    try {
+      // Fetch all users from dbo.Users
+      const result = await pool.request().query('SELECT * FROM STG.Users');
+      console.log('📋 Users table:', result.recordset);
+    } catch (err) {
+      console.error('❌ Error fetching Users table:', err);
+    }
+
     return pool;
   })
-  .catch(err => console.log('SQL connection error: ', err));
+  .catch(err => console.error('❌ SQL connection error:', err));
 
 module.exports = {
-  sql, poolPromise
+  sql,
+  poolPromise
 };

@@ -1,12 +1,39 @@
 const axios = require('axios');
+const { getUserById } = require('../utils');
 
 /**
  * Generate a personalized coaching message based on health data.
  */
 const generateMessage = async (req, res) => {
   console.log(`[${new Date().toISOString()}] [MESSAGE] generateMessage request received: ${JSON.stringify(req.body)}`);
-  const { healthData } = req.body;
-  const prompt = `Based on this health data, generate a personalized coaching message in dutch languages and dont include "hi" , "hello" greeting words in starting instead directly give coaching message and dont include any characters or quotation marks:\n${JSON.stringify(healthData)}`; 
+  const { healthData, userId } = req.body;
+  
+  // Initialize healthData if it doesn't exist
+  const healthDataObj = healthData || {};
+  
+  // If userId is provided, try to get additional user context for personalization
+  if (userId) {
+    console.log(`[${new Date().toISOString()}] [MESSAGE] Attempting to get user data for userId: ${userId}`);
+    try {
+      const userData = await getUserById(userId);
+      if (userData) {
+        console.log(`[${new Date().toISOString()}] [MESSAGE] Found user data for userId ${userId}: ${JSON.stringify(userData)}`);
+        // Add user data to health data for more personalized messages
+        healthDataObj.userName = userData.full_name;
+        healthDataObj.userRole = userData.role;
+        if (userData.user_id) {
+          healthDataObj.msFitId = userData.user_id;
+          console.log(`[${new Date().toISOString()}] [MESSAGE] Added user_id ${userData.user_id} to health data`);
+        }
+      } else {
+        console.log(`[${new Date().toISOString()}] [MESSAGE] No user data found for userId ${userId}`);
+      }
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] [MESSAGE] Error fetching user data: ${error.message}`);
+      // Continue with message generation even if user data lookup fails
+    }
+  }
+  const prompt = `Based on this health data, generate a personalized coaching message in dutch languages and dont include "hi" , "hello" greeting words in starting instead directly give coaching message and dont include any characters or quotation marks:\n${JSON.stringify(healthDataObj)}`; 
 
 
   try {
@@ -41,6 +68,20 @@ const generateMessageByUserId = async (req, res) => {
     console.error(`[${new Date().toISOString()}] [ERROR] userId is missing in request`);
     return res.status(400).json({ error: 'userId is required' });
   }
+  
+  // Try to get user data from database first
+  let userData = null;
+  try {
+    userData = await getUserById(userId);
+    if (userData) {
+      console.log(`[${new Date().toISOString()}] [MESSAGE] Found user data in database for userId: ${userId}`);
+    } else {
+      console.log(`[${new Date().toISOString()}] [MESSAGE] No user data found in database for userId: ${userId}`);
+    }
+  } catch (error) {
+    console.log(`[${new Date().toISOString()}] [MESSAGE] Error fetching user data from database: ${error.message}`);
+    // Continue even if database lookup fails
+  }
 
   try {
     // Date range for yesterday and today
@@ -52,20 +93,30 @@ const generateMessageByUserId = async (req, res) => {
     const endDate = fmt(today);
     console.log(`[${new Date().toISOString()}] [INFO] Date range set: ${startDate} to ${endDate}`);
 
-    // Fetch user info using fitrockrController
-    console.log(`[${new Date().toISOString()}] [INFO] Fetching user info for userId: ${userId}`);
+    // Determine which userId to use for Fitrockr API calls:
+    // prefer the ID fetched from your DB (common field: user_id), otherwise fall back to the provided userId
+    const fetchedFitId = userData && (userData.user_id || userData.fitrockr_id || userData.fitrockrId);
+    const fitrockrUserId = fetchedFitId || userId;
+    if (fetchedFitId && fetchedFitId !== userId) {
+      console.log(`[${new Date().toISOString()}] [INFO] Using fetched Fitrockr user id ${fitrockrUserId} (from DB) instead of passed userId ${userId}`);
+    } else {
+      console.log(`[${new Date().toISOString()}] [INFO] Using userId ${fitrockrUserId} for Fitrockr calls`);
+    }
+
+    // Fetch user info using fitrockrController using the chosen fitrockrUserId
+    console.log(`[${new Date().toISOString()}] [INFO] Fetching user info for fitrockrUserId: ${fitrockrUserId}`);
     const { getUser } = require('./fitrockrController');
-    const userResponse = await getUser({ params: { userId } });
+    const userResponse = await getUser({ params: { userId: fitrockrUserId } });
     const user = userResponse.data;
 
-    const userName = user.firstName || 'there';
+    const userName = (user && (user.firstName || user.name)) || (userData && userData.full_name) || 'there';
     console.log(`[${new Date().toISOString()}] [INFO] User found: ${userName}`);
 
-    // Fetch health data using fitrockrController
-    console.log(`[${new Date().toISOString()}] [INFO] Fetching health data for userId: ${userId}`);
+    // Fetch health data using fitrockrController with the chosen fitrockrUserId
+    console.log(`[${new Date().toISOString()}] [INFO] Fetching health data for fitrockrUserId: ${fitrockrUserId}`);
     const { getDailySummary } = require('./fitrockrController');
     const entries = await getDailySummary({
-      params: { userId },
+      params: { userId: fitrockrUserId },
       query: { startDate, endDate }
     });
 
@@ -83,7 +134,7 @@ const generateMessageByUserId = async (req, res) => {
       });
 
     if (filtered.length === 0) {
-      console.warn(`[${new Date().toISOString()}] [WARNING] No recent health data found for user ${userId}`);
+      console.warn(`[${new Date().toISOString()}] [WARNING] No recent health data found for user ${fitrockrUserId}`);
       return res.json({
         message: null,
         hasFitrockerData: false,
@@ -161,7 +212,6 @@ const generateMessageByUserId = async (req, res) => {
     });
   }
 };
-
 
 module.exports = {
   generateMessage,

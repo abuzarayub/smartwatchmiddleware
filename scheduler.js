@@ -5,15 +5,20 @@ const automation = require('./automate');
 // In-memory log store so admin UI can poll and display
 const logs = [];
 
-function appendLog(message, userId = null) {
+function appendLog(message, userId = null, type = 'info') {
   const userPrefix = userId ? `[User:${userId}] ` : '[All] ';
-  const entry = `${new Date().toLocaleString()}  |  ${userPrefix}${message}`;
+  const timestamp = new Date().toLocaleString();
+  const entry = `${timestamp}  |  ${userPrefix}${message}`;
+  
   console.log(entry);
   logs.push({
     timestamp: new Date().toISOString(),
+    formattedTime: timestamp,
     message: entry,
-    userId: userId
+    userId: userId,
+    type: type
   });
+  
   // Keep last 500 entries to avoid unbounded memory growth
   if (logs.length > 500) logs.shift();
 }
@@ -28,27 +33,31 @@ function runNow(userId, message) {
     throw new Error('Both userId and message are required');
   }
   
-  appendLog(`Manual execution triggered for user ${userId}`, userId);
-  appendLog(`Using pre-generated message: ${message.substring(0, 50)}...`, userId);
+  const timestamp = new Date().toLocaleString();
+  
+  appendLog(`Message sent immediately via Send Now button`, userId, 'send');
+  appendLog(`Message content: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`, userId, 'content');
+  appendLog(`Sent at: ${timestamp}`, userId, 'timestamp');
   
   // Send the pre-generated message directly to the user
   const mockReq = { body: { driver_id: userId, message } };
   const mockRes = {
     json: data => {
       console.log('Notification sent:', data);
-      appendLog(`Message sent successfully to user ${userId}`, userId);
+      appendLog(`Notification sent via FCM token successfully`, userId, 'notification');
+      appendLog(`FCM Response: ${JSON.stringify(data)}`, userId, 'fcm_response');
     },
     status: code => ({
       json: data => {
         console.error(`Notification error (${code}):`, data);
-        appendLog(`Failed to send message to user ${userId}: ${data?.error || 'Unknown error'}`, userId);
+        appendLog(`Failed to send notification via FCM: ${data?.error || 'Unknown error'}`, userId, 'error');
       }
     })
   };
   
   const notifyController = require('./controllers/notifyController');
   notifyController.sendNotification(mockReq, mockRes);
-  appendLog('Manual execution completed', userId);
+  appendLog(`Message sending process completed`, userId, 'complete');
 }
 
 /**
@@ -67,50 +76,76 @@ function scheduleAt(time, date, userId, message) {
     throw new Error('Both userId and message are required');
   }
 
+  const scheduledTime = date ? `${date} ${time}` : `Daily at ${time}`;
+  const timestamp = new Date().toLocaleString();
+
   let cronExpr;
   if (date) {
     const [yyyy, mm, dd] = date.split('-');
     cronExpr = `${minute} ${hour} ${dd} ${mm} *`; // at given date
-    appendLog(`Message scheduled for user ${userId} on ${date} at ${time}`, userId);
+    appendLog(`Message scheduled for specific date`, userId, 'schedule');
+    appendLog(`Scheduled for: ${scheduledTime}`, userId, 'schedule_detail');
   } else {
     cronExpr = `${minute} ${hour} * * *`; // daily
-    appendLog(`Daily message scheduled for user ${userId} at ${time}`, userId);
+    appendLog(`Daily message scheduled`, userId, 'schedule');
+    appendLog(`Scheduled for: ${scheduledTime}`, userId, 'schedule_detail');
   }
 
+  appendLog(`Scheduled at: ${timestamp}`, userId, 'schedule_timestamp');
+  appendLog(`Message content: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`, userId, 'schedule_content');
+
   cron.schedule(cronExpr, () => {
-    appendLog(`Scheduled message starting for user ${userId} (${date ? date : 'daily'}) ${time}`, userId);
+    const executionTime = new Date().toLocaleString();
+    appendLog(`Scheduled message execution started`, userId, 'schedule_execute');
+    appendLog(`Executing at: ${executionTime}`, userId, 'schedule_execute_time');
+    appendLog(`Original schedule: ${scheduledTime}`, userId, 'schedule_original');
+    
+    // For scheduled messages, we log them as sent messages that will appear in chat
+    appendLog(`Scheduled message ready for delivery`, userId, 'schedule_ready');
+    appendLog(`Message: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`, userId, 'schedule_message');
     
     // Send the pre-generated message directly to the user
     const mockReq = { body: { driver_id: userId, message } };
     const mockRes = {
       json: data => {
         console.log('Scheduled notification sent:', data);
-        appendLog(`Scheduled message sent successfully to user ${userId}`, userId);
+        appendLog(`Scheduled message sent successfully via FCM`, userId, 'schedule_sent');
+        appendLog(`FCM Response: ${JSON.stringify(data)}`, userId, 'schedule_fcm_response');
+        appendLog(`Message delivered at: ${new Date().toLocaleString()}`, userId, 'schedule_delivery');
       },
       status: code => ({
         json: data => {
           console.error(`Scheduled notification error (${code}):`, data);
-          appendLog(`Failed to send scheduled message to user ${userId}: ${data?.error || 'Unknown error'}`, userId);
+          appendLog(`Failed to send scheduled message via FCM: ${data?.error || 'Unknown error'}`, userId, 'schedule_error');
+          appendLog(`Error occurred at: ${new Date().toLocaleString()}`, userId, 'schedule_error_time');
         }
       })
     };
     
     const notifyController = require('./controllers/notifyController');
     notifyController.sendNotification(mockReq, mockRes);
-    appendLog('Scheduled job completed', userId);
+    appendLog(`Scheduled message process completed`, userId, 'schedule_complete');
   });
 }
 
 function getLogs(userId = null) {
   if (userId) {
-    // Filter logs for specific user
+    // Filter logs for specific user and return structured data
     return logs
       .filter(log => log.userId === userId)
       .slice(-200)
-      .map(log => log.message);
+      .map(log => ({
+        message: log.message,
+        timestamp: log.formattedTime,
+        type: log.type
+      }));
   }
-  // Return all logs
-  return logs.slice(-200).map(log => log.message);
+  // Return all logs with structured data
+  return logs.slice(-200).map(log => ({
+    message: log.message,
+    timestamp: log.formattedTime,
+    type: log.type
+  }));
 }
 
 module.exports = {

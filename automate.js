@@ -5,7 +5,7 @@ const { poolPromise, sql } = require('./db/sql');
 
 // Controllers
 const fitrockrController = require('./controllers/fitrockrController');
-const messageController  = require('./controllers/messageController').default;
+const messageController  = require('./controllers/messageController');
 const notifyController   = require('./controllers/notifyController');
 
 /**
