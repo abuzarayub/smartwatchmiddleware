@@ -169,8 +169,10 @@ const generateMessageByUserId = async (req, res) => {
     };
     console.log(`[${new Date().toISOString()}] [INFO] Human-readable health data:`, humanReadableData);
 
-    // Generate personalized message
-    const prompt = `Generate a personalized health coaching message for ${userName} based on this health data:\n${JSON.stringify(healthData)}. Dont Start with Greeting but include his name ${userName}" and keep it motivational and concise and it should be in dutch language not in english and dont include any characters or quotation marks in the message.`;
+    // Generate personalized message without including the raw health data in the message
+    const prompt = `Generate a personalized health coaching message for ${userName}. Don't start with a greeting but include the name ${userName}. Keep it motivational and concise. The message should be in Dutch language, not in English, and don't include any special characters or quotation marks in the message. 
+
+Mention that you have analyzed their health data but DO NOT include specific numbers in the message. Focus on general encouragement and motivation based on their activity level.`;
     console.log(`[${new Date().toISOString()}] [INFO] Generated prompt for OpenAI API`);
 
     const response = await axios.post('https://api.openai.com/v1/chat/completions', {

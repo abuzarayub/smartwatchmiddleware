@@ -24,11 +24,11 @@ function appendLog(message, userId = null, type = 'info') {
 }
 
 /**
- * Immediately triggers the existing automation flow.
+ * Immediately triggers the existing automation flow and stores the message in the chat database.
  * @param {string} userId - User ID to target a specific user
  * @param {string} message - Pre-generated message to use
  */
-function runNow(userId, message) {
+async function runNow(userId, message) {
   if (!userId || !message) {
     throw new Error('Both userId and message are required');
   }
@@ -39,25 +39,34 @@ function runNow(userId, message) {
   appendLog(`Message content: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`, userId, 'content');
   appendLog(`Sent at: ${timestamp}`, userId, 'timestamp');
   
-  // Send the pre-generated message directly to the user
-  const mockReq = { body: { driver_id: userId, message } };
-  const mockRes = {
-    json: data => {
-      console.log('Notification sent:', data);
-      appendLog(`Notification sent via FCM token successfully`, userId, 'notification');
-      appendLog(`FCM Response: ${JSON.stringify(data)}`, userId, 'fcm_response');
-    },
-    status: code => ({
+  try {
+    // Store message in the chat database
+    await storeMessageInChatSystem(userId, message);
+    appendLog(`Message stored in chat database successfully`, userId, 'database');
+    
+    // Send the notification
+    const mockReq = { body: { driver_id: userId, message } };
+    const mockRes = {
       json: data => {
-        console.error(`Notification error (${code}):`, data);
-        appendLog(`Failed to send notification via FCM: ${data?.error || 'Unknown error'}`, userId, 'error');
-      }
-    })
-  };
-  
-  const notifyController = require('./controllers/notifyController');
-  notifyController.sendNotification(mockReq, mockRes);
-  appendLog(`Message sending process completed`, userId, 'complete');
+        console.log('Notification sent:', data);
+        appendLog(`Notification sent via FCM token successfully`, userId, 'notification');
+        appendLog(`FCM Response: ${JSON.stringify(data)}`, userId, 'fcm_response');
+      },
+      status: code => ({
+        json: data => {
+          console.error(`Notification error (${code}):`, data);
+          appendLog(`Failed to send notification via FCM: ${data?.error || 'Unknown error'}`, userId, 'error');
+        }
+      })
+    };
+    
+    const notifyController = require('./controllers/notifyController');
+    notifyController.sendNotification(mockReq, mockRes);
+    appendLog(`Message sending process completed`, userId, 'complete');
+  } catch (error) {
+    appendLog(`Error in runNow: ${error.message}`, userId, 'error');
+    throw error;
+  }
 }
 
 /**
@@ -94,37 +103,45 @@ function scheduleAt(time, date, userId, message) {
   appendLog(`Scheduled at: ${timestamp}`, userId, 'schedule_timestamp');
   appendLog(`Message content: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`, userId, 'schedule_content');
 
-  cron.schedule(cronExpr, () => {
+  cron.schedule(cronExpr, async () => {
     const executionTime = new Date().toLocaleString();
     appendLog(`Scheduled message execution started`, userId, 'schedule_execute');
     appendLog(`Executing at: ${executionTime}`, userId, 'schedule_execute_time');
     appendLog(`Original schedule: ${scheduledTime}`, userId, 'schedule_original');
     
-    // For scheduled messages, we log them as sent messages that will appear in chat
-    appendLog(`Scheduled message ready for delivery`, userId, 'schedule_ready');
-    appendLog(`Message: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`, userId, 'schedule_message');
-    
-    // Send the pre-generated message directly to the user
-    const mockReq = { body: { driver_id: userId, message } };
-    const mockRes = {
-      json: data => {
-        console.log('Scheduled notification sent:', data);
-        appendLog(`Scheduled message sent successfully via FCM`, userId, 'schedule_sent');
-        appendLog(`FCM Response: ${JSON.stringify(data)}`, userId, 'schedule_fcm_response');
-        appendLog(`Message delivered at: ${new Date().toLocaleString()}`, userId, 'schedule_delivery');
-      },
-      status: code => ({
+    try {
+      // Store message in the chat database
+      await storeMessageInChatSystem(userId, message);
+      appendLog(`Scheduled message stored in chat database successfully`, userId, 'schedule_database');
+      
+      // For scheduled messages, we log them as sent messages that will appear in chat
+      appendLog(`Scheduled message ready for delivery`, userId, 'schedule_ready');
+      appendLog(`Message: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`, userId, 'schedule_message');
+      
+      // Send the notification
+      const mockReq = { body: { driver_id: userId, message } };
+      const mockRes = {
         json: data => {
-          console.error(`Scheduled notification error (${code}):`, data);
-          appendLog(`Failed to send scheduled message via FCM: ${data?.error || 'Unknown error'}`, userId, 'schedule_error');
-          appendLog(`Error occurred at: ${new Date().toLocaleString()}`, userId, 'schedule_error_time');
-        }
-      })
-    };
-    
-    const notifyController = require('./controllers/notifyController');
-    notifyController.sendNotification(mockReq, mockRes);
-    appendLog(`Scheduled message process completed`, userId, 'schedule_complete');
+          console.log('Scheduled notification sent:', data);
+          appendLog(`Scheduled message sent successfully via FCM`, userId, 'schedule_sent');
+          appendLog(`FCM Response: ${JSON.stringify(data)}`, userId, 'schedule_fcm_response');
+          appendLog(`Message delivered at: ${new Date().toLocaleString()}`, userId, 'schedule_delivery');
+        },
+        status: code => ({
+          json: data => {
+            console.error(`Scheduled notification error (${code}):`, data);
+            appendLog(`Failed to send scheduled message via FCM: ${data?.error || 'Unknown error'}`, userId, 'schedule_error');
+            appendLog(`Error occurred at: ${new Date().toLocaleString()}`, userId, 'schedule_error_time');
+          }
+        })
+      };
+      
+      const notifyController = require('./controllers/notifyController');
+      notifyController.sendNotification(mockReq, mockRes);
+      appendLog(`Scheduled message process completed`, userId, 'schedule_complete');
+    } catch (error) {
+      appendLog(`Error in scheduled execution: ${error.message}`, userId, 'schedule_error');
+    }
   });
 }
 
@@ -140,9 +157,77 @@ function getLogs(userId = null) {
   return logs.slice(-200).map(log => log.message);
 }
 
+/**
+ * Stores a message in the chat system database using the same approach as the chat system.
+ * @param {string} userId - User ID to target a specific user
+ * @param {string} message - Message to store
+ */
+async function storeMessageInChatSystem(userId, message) {
+  try {
+    const axios = require('axios');
+    const { getUserById } = require('./utils/userUtils');
+    
+    // Get user data to find the room ID
+    const userData = await getUserById(userId);
+    if (!userData) {
+      throw new Error(`User with ID ${userId} not found`);
+    }
+    
+    // Get admin ID (system user ID) for the room
+     const adminId = process.env.SYSTEM_ADMIN_ID || 50; // Default to 50 if not set (admin@gmail.com)
+    
+    // Find or create room
+    let roomId;
+    try {
+      // Try to find existing room
+       const backendUrl = 'https://amployee-api-bdcwgrhvf3dxdpfs.westeurope-01.azurewebsites.net';
+       const findRoomResponse = await axios.post(
+         `${backendUrl}/api/v1/chat/find-room`,
+         { userId: userData.id, adminId },
+         { headers: { 'Content-Type': 'application/json' } }
+       );
+       roomId = findRoomResponse.data.data;
+       
+       if (!roomId) {
+         // Create new room if not found
+         const createRoomResponse = await axios.post(
+           `${backendUrl}/api/v1/chat/join-chat`,
+           { userId: userData.id, adminId },
+           { headers: { 'Content-Type': 'application/json' } }
+         );
+        roomId = createRoomResponse.data.data.id;
+      }
+    } catch (error) {
+      console.error('Error finding/creating room:', error.message);
+      throw new Error(`Failed to find or create chat room: ${error.message}`);
+    }
+    
+    if (!roomId) {
+      throw new Error('Failed to determine room ID for message storage');
+    }
+    
+    // Store message in the chat system
+     const sendMessageResponse = await axios.post(
+       `${backendUrl}/api/v1/chat/send-message`,
+       { 
+         roomId, 
+         messageBody: message,
+         senderId: adminId
+       },
+       { headers: { 'Content-Type': 'application/json' } }
+     );
+    
+    return sendMessageResponse.data;
+  } catch (error) {
+    console.error('Error storing message in chat system:', error.message);
+    throw error;
+  }
+}
+
 module.exports = {
   runNow,
   scheduleAt,
   getLogs,
-  appendLog
+  appendLog,
+  storeMessageInChatSystem
 };
