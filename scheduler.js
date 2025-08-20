@@ -130,22 +130,14 @@ function scheduleAt(time, date, userId, message) {
 
 function getLogs(userId = null) {
   if (userId) {
-    // Filter logs for specific user and return structured data
+    // Filter logs for specific user and return array of strings
     return logs
       .filter(log => log.userId === userId)
       .slice(-200)
-      .map(log => ({
-        message: log.message,
-        timestamp: log.formattedTime,
-        type: log.type
-      }));
+      .map(log => log.message);
   }
-  // Return all logs with structured data
-  return logs.slice(-200).map(log => ({
-    message: log.message,
-    timestamp: log.formattedTime,
-    type: log.type
-  }));
+  // Return all logs as array of strings
+  return logs.slice(-200).map(log => log.message);
 }
 
 module.exports = {
